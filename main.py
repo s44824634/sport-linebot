@@ -36,11 +36,6 @@ alliance_dict = {
     "韓國職籃": "92", "中國職籃": "94", "日本職籃": "97", "澳洲職籃": "12",
 }
 
-during_map = {
-    "本月": "thismonth", "上月": "lastmonth",
-    "本週": "thisweek", "上週": "lastweek", "整季": "season"
-}
-
 NBA_team = ["底特律活塞","休士頓火箭","猶他爵士","明尼蘇達灰狼","達拉斯獨行俠","洛杉磯湖人","曼斐斯灰熊","紐約尼克","沙加緬度國王","芝加哥公牛","丹佛金塊","波士頓塞爾提克","費城76人","印第安那溜馬","紐奧良鵜鶘","鳳凰城太陽","金州勇士","布魯克林籃網","邁阿密熱火","密爾瓦基公鹿","洛杉磯快艇","亞特蘭大老鷹","奧克拉荷馬雷霆","聖安東尼奧馬刺","華盛頓巫師","多倫多暴龍","奧蘭多魔術","夏洛特黃蜂","波特蘭拓荒者","克里夫蘭騎士"]
 MLB_team = ["亞特蘭大勇士","邁阿密馬林魚","紐約大都會","費城費城人","華盛頓國民","芝加哥小熊","辛辛那堤紅人","密爾瓦基釀酒人","匹茲堡海盜","聖路易紅雀","亞歷桑那響尾蛇","科羅拉多落磯","洛杉磯道奇","聖地牙哥教士","舊金山巨人","巴爾的摩金鶯","波士頓紅襪","紐約洋基","坦帕灣光芒","多倫多藍鳥","芝加哥白襪","克里夫蘭守護者","底特律老虎","堪薩斯皇家","明尼蘇達雙城","休士頓太空人","洛杉磯天使","奧克蘭運動家","西雅圖水手","德州遊騎兵"]
 NPB_team = ["讀賣巨人","養樂多燕子","橫濱海灣之星","中日龍","阪神虎","廣島東洋鯉魚","日本火腿鬥士","樂天金鷹","西武獅","羅德海洋","歐力士猛牛","軟體銀行鷹"]
@@ -51,27 +46,28 @@ team_pattern = "|".join(NBA_team + NHL_team + MLB_team + NPB_team + Korea_team)
 HELP_MSG = """🏆 勝負密碼 使用說明
 
 📌 指令格式：
-目標 範圍 人數
+直接輸入目標即可
 
 📌 範例：
-NBA 本月 10
-MLB 本週 15
-足球 上月 10
+NBA
+MLB
+足球
+日本職棒
 
 📌 支援目標：
 NBA / MLB / 足球 / 日本職棒
 NHL冰球 / 美式足球 / 歐洲職籃
 韓國職籃 / 中國職籃 / 日本職籃
 
-📌 支援範圍：
-本月 / 上月 / 本週 / 上週 / 整季
+📌 說明：
+本系統自動抓取本月主推榜前30名高手
+對明日比賽的預測方向進行統計
 
 ⚠️ 爬取需要 3~10 分鐘，請耐心等候"""
 
 class Leaderboard:
-    def __init__(self, alliance, during, page):
+    def __init__(self, alliance, page):
         self.alliance = alliance
-        self.during = during
         self.page = page
         self.web_url = "https://www.playsport.cc/"
         self.user_url = self.web_url + "visit_member.php?visit="
@@ -80,7 +76,7 @@ class Leaderboard:
 
     @cached_property
     def crawl_content(self):
-        url = self.web_url + f"billboard/mainPrediction?during={self.during}&allianceid={self.alliance}&page={self.page}"
+        url = self.web_url + f"billboard/mainPrediction?during=thismonth&allianceid={self.alliance}&page={self.page}"
         r = requests.get(url=url, headers=self.header, timeout=15)
         return r.text
 
@@ -99,7 +95,7 @@ class Leaderboard:
         global_ = pd.DataFrame(self.board_json["rankers"].get("2", []))
         df = pd.concat([global_, taiwan], ignore_index=True)
         df.replace({"mode": {1: "運彩盤賽事", 2: "國際盤賽事", "1": "運彩盤賽事", "2": "國際盤賽事"}}, inplace=True)
-        df["linkUrl"] = self.user_url + df["userid"] + f"&allianceid={self.alliance}&gameday=today"
+        df["linkUrl"] = self.user_url + df["userid"] + f"&allianceid={self.alliance}&gameday=tomorrow"
         return df
 
 class RankUser:
@@ -144,9 +140,11 @@ class RankUser:
             pass
         return tablebox
 
-def run_crawler(target, during_key, num, user_id):
+def has_score(s):
+    return bool(re.search(r'^\d+\s', str(s)))
+
+def run_crawler(target, user_id):
     try:
-        during = during_map.get(during_key, "thismonth")
         alliance = alliance_dict.get(target)
         if not alliance:
             push_message(user_id, f"❌ 不支援 {target}")
@@ -155,7 +153,7 @@ def run_crawler(target, during_key, num, user_id):
         leaderboard = pd.DataFrame()
         for page in range(2):
             try:
-                r = Leaderboard(alliance, during, page)
+                r = Leaderboard(alliance, page)
                 temp = r.dataframe
                 temp = temp[temp["mode"] == "國際盤賽事"]
                 leaderboard = pd.concat([leaderboard, temp], ignore_index=True)
@@ -165,6 +163,8 @@ def run_crawler(target, during_key, num, user_id):
         if leaderboard.empty:
             push_message(user_id, "❌ 無法取得排行榜，請稍後再試")
             return
+
+        leaderboard = leaderboard.head(30)
 
         all_pred = pd.DataFrame()
         collected = 0
@@ -177,8 +177,6 @@ def run_crawler(target, during_key, num, user_id):
                     collected += 1
             except:
                 pass
-            if collected >= num:
-                break
             time.sleep(random.uniform(1, 3))
 
         if all_pred.empty:
@@ -191,6 +189,11 @@ def run_crawler(target, during_key, num, user_id):
         )
         merge = merge[merge["mode_x"] == merge["mode_y"]]
         mp = merge[merge["main_push"]].copy()
+        mp = mp[~mp["game"].apply(has_score)].copy()
+
+        if mp.empty:
+            push_message(user_id, f"⚠️ {target} 目前沒有明日比賽的預測\n高手們可能還沒下注，請晚點再試")
+            return
 
         def extract_game(s):
             m = re.search(rf"({team_pattern})\s*({team_pattern})", str(s))
@@ -207,7 +210,7 @@ def run_crawler(target, during_key, num, user_id):
                .sort_values("count", ascending=False)
                .head(10))
 
-        lines = [f"🏆 {target} 主推情報（{during_key}・{collected}人）\n"]
+        lines = [f"🏆 {target} 明日賽事主推統計\n本月榜前30名・共{collected}人預測\n"]
         for _, row in top.iterrows():
             lines.append(f"📊 {row['game2']}")
             lines.append(f"   → {row['pred2']}　{row['count']}人推")
@@ -248,30 +251,29 @@ def callback():
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_message(event):
     text = event.message.text.strip()
-    parts = text.split()
     user_id = event.source.user_id
 
     with ApiClient(configuration) as api_client:
         line_bot_api = MessagingApi(api_client)
 
         if text in ["help", "Help", "說明", "使用說明", "?"]:
-            reply = HELP_MSG
+            line_bot_api.reply_message(
+                ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[TextMessage(text="⏳ 載入中...")]
+                )
+            )
+            push_message(user_id, HELP_MSG)
+            return
 
-        elif len(parts) == 3 and parts[0] in alliance_dict and parts[1] in during_map:
-            try:
-                num = int(parts[2])
-                if num < 1 or num > 30:
-                    reply = "❌ 人數請設定 1~30 之間"
-                else:
-                    t = threading.Thread(
-                        target=run_crawler,
-                        args=(parts[0], parts[1], num, user_id),
-                        daemon=True
-                    )
-                    t.start()
-                    reply = f"⏳ 開始爬取 {parts[0]} {parts[1]} {num}人資料\n約需 3~8 分鐘，完成後自動回傳..."
-            except ValueError:
-                reply = "❌ 人數請輸入數字，例如：NBA 本月 10"
+        elif text in alliance_dict:
+            t = threading.Thread(
+                target=run_crawler,
+                args=(text, user_id),
+                daemon=True
+            )
+            t.start()
+            reply = f"⏳ 開始統計 {text} 明日賽事主推\n本月榜前30名高手預測中\n約需 5~10 分鐘，完成後自動回傳..."
 
         else:
             reply = "❓ 格式錯誤\n請輸入「說明」查看使用方式"
