@@ -1,0 +1,11 @@
+flask
+line-bot-sdk
+requests
+beautifulsoup4
+fake_useragent
+pandas
+lxml
+tqdm
+pillow
+matplotlib
+gunicorn
