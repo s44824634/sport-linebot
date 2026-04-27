@@ -5,6 +5,7 @@ import re
 import json
 import requests
 import pandas as pd
+import threading
 from io import StringIO
 from functools import cached_property
 from fake_useragent import UserAgent
@@ -143,71 +144,92 @@ class RankUser:
             pass
         return tablebox
 
-def run_crawler(target, during_key, num):
-    during = during_map.get(during_key, "thismonth")
-    alliance = alliance_dict.get(target)
-    if not alliance:
-        return f"❌ 不支援 {target}"
+def run_crawler(target, during_key, num, user_id):
+    try:
+        during = during_map.get(during_key, "thismonth")
+        alliance = alliance_dict.get(target)
+        if not alliance:
+            push_message(user_id, f"❌ 不支援 {target}")
+            return
 
-    leaderboard = pd.DataFrame()
-    for page in range(2):
-        try:
-            r = Leaderboard(alliance, during, page)
-            temp = r.dataframe
-            temp = temp[temp["mode"] == "國際盤賽事"]
-            leaderboard = pd.concat([leaderboard, temp], ignore_index=True)
-        except:
-            pass
+        leaderboard = pd.DataFrame()
+        for page in range(2):
+            try:
+                r = Leaderboard(alliance, during, page)
+                temp = r.dataframe
+                temp = temp[temp["mode"] == "國際盤賽事"]
+                leaderboard = pd.concat([leaderboard, temp], ignore_index=True)
+            except:
+                pass
 
-    if leaderboard.empty:
-        return "❌ 無法取得排行榜，請稍後再試"
+        if leaderboard.empty:
+            push_message(user_id, "❌ 無法取得排行榜，請稍後再試")
+            return
 
-    all_pred = pd.DataFrame()
-    collected = 0
-    for i in range(len(leaderboard)):
-        try:
-            user = RankUser(leaderboard.iloc[i])
-            pred = user.prediction
-            if pred.shape[0] > 0:
-                all_pred = pd.concat([all_pred, pred], ignore_index=True)
-                collected += 1
-        except:
-            pass
-        if collected >= num:
-            break
-        time.sleep(random.uniform(1, 3))
+        all_pred = pd.DataFrame()
+        collected = 0
+        for i in range(len(leaderboard)):
+            try:
+                user = RankUser(leaderboard.iloc[i])
+                pred = user.prediction
+                if pred.shape[0] > 0:
+                    all_pred = pd.concat([all_pred, pred], ignore_index=True)
+                    collected += 1
+            except:
+                pass
+            if collected >= num:
+                break
+            time.sleep(random.uniform(1, 3))
 
-    if all_pred.empty:
-        return "❌ 沒有收集到預測資料"
+        if all_pred.empty:
+            push_message(user_id, "❌ 沒有收集到預測資料")
+            return
 
-    merge = pd.merge(
-        leaderboard[["userid","wingame","losegame","winpercentage","mode"]],
-        all_pred, on="userid"
-    )
-    merge = merge[merge["mode_x"] == merge["mode_y"]]
-    mp = merge[merge["main_push"]].copy()
+        merge = pd.merge(
+            leaderboard[["userid","wingame","losegame","winpercentage","mode"]],
+            all_pred, on="userid"
+        )
+        merge = merge[merge["mode_x"] == merge["mode_y"]]
+        mp = merge[merge["main_push"]].copy()
 
-    def extract_game(s):
-        m = re.search(rf"({team_pattern})\s*({team_pattern})", str(s))
-        return f"{m.group(1)} vs {m.group(2)}" if m else str(s)
+        def extract_game(s):
+            m = re.search(rf"({team_pattern})\s*({team_pattern})", str(s))
+            return f"{m.group(1)} vs {m.group(2)}" if m else str(s)
 
-    def clean_pred(s):
-        return re.sub(r"\d+|[贏輸%.]", "", str(s)).strip()
+        def clean_pred(s):
+            return re.sub(r"\d+|[贏輸%.]", "", str(s)).strip()
 
-    mp["game2"] = mp["game"].apply(extract_game)
-    mp["pred2"] = mp["prediction"].apply(clean_pred)
+        mp["game2"] = mp["game"].apply(extract_game)
+        mp["pred2"] = mp["prediction"].apply(clean_pred)
 
-    top = (mp.groupby(["game2","pred2"]).size()
-           .reset_index(name="count")
-           .sort_values("count", ascending=False)
-           .head(10))
+        top = (mp.groupby(["game2","pred2"]).size()
+               .reset_index(name="count")
+               .sort_values("count", ascending=False)
+               .head(10))
 
-    lines = [f"🏆 {target} 主推情報（{during_key}・{collected}人）\n"]
-    for _, row in top.iterrows():
-        lines.append(f"📊 {row['game2']}")
-        lines.append(f"   → {row['pred2']}　{row['count']}人推")
-        lines.append("")
-    return "\n".join(lines)
+        lines = [f"🏆 {target} 主推情報（{during_key}・{collected}人）\n"]
+        for _, row in top.iterrows():
+            lines.append(f"📊 {row['game2']}")
+            lines.append(f"   → {row['pred2']}　{row['count']}人推")
+            lines.append("")
+
+        push_message(user_id, "\n".join(lines))
+
+    except Exception as e:
+        push_message(user_id, f"❌ 發生錯誤：{str(e)}")
+
+def push_message(user_id, text):
+    try:
+        with ApiClient(configuration) as api_client:
+            line_bot_api = MessagingApi(api_client)
+            line_bot_api.push_message(
+                PushMessageRequest(
+                    to=user_id,
+                    messages=[TextMessage(text=text)]
+                )
+            )
+    except Exception as e:
+        print(f"Push error: {e}")
 
 @app.route("/")
 def index():
@@ -241,22 +263,13 @@ def handle_message(event):
                 if num < 1 or num > 30:
                     reply = "❌ 人數請設定 1~30 之間"
                 else:
-                    line_bot_api.reply_message(
-                        ReplyMessageRequest(
-                            reply_token=event.reply_token,
-                            messages=[TextMessage(text=f"⏳ 開始爬取 {parts[0]} {parts[1]} {num}人資料\n約需 3~8 分鐘，完成後自動回傳...")]
-                        )
+                    t = threading.Thread(
+                        target=run_crawler,
+                        args=(parts[0], parts[1], num, user_id),
+                        daemon=True
                     )
-                    result = run_crawler(parts[0], parts[1], num)
-                    with ApiClient(configuration) as api_client2:
-                        line_bot_api2 = MessagingApi(api_client2)
-                        line_bot_api2.push_message(
-                            PushMessageRequest(
-                                to=user_id,
-                                messages=[TextMessage(text=result)]
-                            )
-                        )
-                    return
+                    t.start()
+                    reply = f"⏳ 開始爬取 {parts[0]} {parts[1]} {num}人資料\n約需 3~8 分鐘，完成後自動回傳..."
             except ValueError:
                 reply = "❌ 人數請輸入數字，例如：NBA 本月 10"
 
