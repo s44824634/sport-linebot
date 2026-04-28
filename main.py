@@ -148,6 +148,19 @@ def has_score(s):
     return bool(re.search(r'^\d+\s', str(s)))
 
 
+def extract_game(s):
+    s = str(s)
+    s = re.sub(r'^\d+\s+', '', s)
+    s = re.sub(r'\s+\d+分[贏輸]\d+%.*$', '', s)
+    s = s.strip()
+    m = re.search(rf"({team_pattern})\s*({team_pattern})", s)
+    return f"{m.group(1)} vs {m.group(2)}" if m else s
+
+
+def clean_pred(s):
+    return re.sub(r"\d+|[贏輸%.]", "", str(s)).strip()
+
+
 def run_crawler(target, user_id):
     try:
         alliance = alliance_dict.get(target)
@@ -199,13 +212,6 @@ def run_crawler(target, user_id):
         if mp.empty:
             push_message(user_id, f"⚠️ {target} 目前沒有明日比賽的預測\n高手們可能還沒下注，請晚點再試")
             return
-
-        def extract_game(s):
-            m = re.search(rf"({team_pattern})\s*({team_pattern})", str(s))
-            return f"{m.group(1)} vs {m.group(2)}" if m else str(s)
-
-        def clean_pred(s):
-            return re.sub(r"\d+|[贏輸%.]", "", str(s)).strip()
 
         mp["game2"] = mp["game"].apply(extract_game)
         mp["pred2"] = mp["prediction"].apply(clean_pred)
