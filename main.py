@@ -210,19 +210,22 @@ def run_crawler(target, user_id):
                .sort_values("count", ascending=False)
                .head(10))
 
-        lines = [f"🏆 {target} 明日賽事主推統計\n本月榜前30名・共{collected}人預測\n"]
+ lines = [f"🏆 {target} 明日賽事主推統計\n本月榜前30名・共{collected}人預測\n"]
 for _, row in top.iterrows():
-    count = row['count']
-    if count >= 7:
-        confidence = "💪 強"
-    elif count >= 4:
-        confidence = "👍 中"
-    else:
-        confidence = "⚠️ 弱"
-    lines.append(f"📊 {row['game2']}")
-    lines.append(f"   → {row['pred2']}　{count}人推")
-    lines.append(f"   信心指數：{confidence}（{count}/30人）")
-    lines.append("")
+    try:
+        count = int(row['count'])
+        if count >= 7:
+            confidence = "💪 強"
+        elif count >= 4:
+            confidence = "👍 中"
+        else:
+            confidence = "⚠️ 弱"
+        lines.append(f"📊 {row['game2']}")
+        lines.append(f"   → {row['pred2']}　{count}人推")
+        lines.append(f"   信心指數：{confidence}（{count}/30人）")
+        lines.append("")
+    except Exception:
+        pass
 
 lines.append("─────────────────")
 lines.append("💬 加入運彩討論群")
