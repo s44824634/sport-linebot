@@ -45,10 +45,7 @@ team_pattern = "|".join(NBA_team + NHL_team + MLB_team + NPB_team + Korea_team)
 
 HELP_MSG = """🏆 勝負密碼 使用說明
 
-📌 指令格式：
-直接輸入目標即可
-
-📌 範例：
+📌 直接輸入目標即可：
 NBA
 MLB
 足球
@@ -63,7 +60,12 @@ NHL冰球 / 美式足球 / 歐洲職籃
 本系統自動抓取本月主推榜前30名高手
 對明日比賽的預測方向進行統計
 
-⚠️ 爬取需要 3~10 分鐘，請耐心等候"""
+⚠️ 爬取需要 3~10 分鐘，請耐心等候
+
+─────────────────
+💬 加入運彩討論群
+LINE 搜尋 st130330"""
+
 
 class Leaderboard:
     def __init__(self, alliance, page):
@@ -98,6 +100,7 @@ class Leaderboard:
         df["linkUrl"] = self.user_url + df["userid"] + f"&allianceid={self.alliance}&gameday=tomorrow"
         return df
 
+
 class RankUser:
     def __init__(self, user_data):
         self.user_data = user_data
@@ -118,7 +121,7 @@ class RankUser:
             table["userid"] = self.user_data["userid"]
             table["nickname"] = self.user_data["nickname"]
             table["mode"] = mode
-            return table[table["game"] != "無預測"][["userid","nickname","mode","game","prediction","result"]]
+            return table[table["game"] != "無預測"][["userid", "nickname", "mode", "game", "prediction", "result"]]
 
         def is_main_push(pred_list):
             return ["主推" in "".join(str(i) for i in pred_list[g]) for g in range(len(pred_list))]
@@ -136,12 +139,14 @@ class RankUser:
             if uni.shape[0] != 0 or bank.shape[0] != 0:
                 tablebox = pd.concat([uni, bank], ignore_index=True)
                 tablebox["main_push"] = is_main_push(pred_list)
-        except:
+        except Exception:
             pass
         return tablebox
 
+
 def has_score(s):
     return bool(re.search(r'^\d+\s', str(s)))
+
 
 def run_crawler(target, user_id):
     try:
@@ -157,7 +162,7 @@ def run_crawler(target, user_id):
                 temp = r.dataframe
                 temp = temp[temp["mode"] == "國際盤賽事"]
                 leaderboard = pd.concat([leaderboard, temp], ignore_index=True)
-            except:
+            except Exception:
                 pass
 
         if leaderboard.empty:
@@ -175,7 +180,7 @@ def run_crawler(target, user_id):
                 if pred.shape[0] > 0:
                     all_pred = pd.concat([all_pred, pred], ignore_index=True)
                     collected += 1
-            except:
+            except Exception:
                 pass
             time.sleep(random.uniform(1, 3))
 
@@ -184,7 +189,7 @@ def run_crawler(target, user_id):
             return
 
         merge = pd.merge(
-            leaderboard[["userid","wingame","losegame","winpercentage","mode"]],
+            leaderboard[["userid", "wingame", "losegame", "winpercentage", "mode"]],
             all_pred, on="userid"
         )
         merge = merge[merge["mode_x"] == merge["mode_y"]]
@@ -205,36 +210,34 @@ def run_crawler(target, user_id):
         mp["game2"] = mp["game"].apply(extract_game)
         mp["pred2"] = mp["prediction"].apply(clean_pred)
 
-        top = (mp.groupby(["game2","pred2"]).size()
+        top = (mp.groupby(["game2", "pred2"]).size()
                .reset_index(name="count")
                .sort_values("count", ascending=False)
                .head(10))
 
- lines = [f"🏆 {target} 明日賽事主推統計\n本月榜前30名・共{collected}人預測\n"]
-for _, row in top.iterrows():
-    try:
-        count = int(row['count'])
-        if count >= 7:
-            confidence = "💪 強"
-        elif count >= 4:
-            confidence = "👍 中"
-        else:
-            confidence = "⚠️ 弱"
-        lines.append(f"📊 {row['game2']}")
-        lines.append(f"   → {row['pred2']}　{count}人推")
-        lines.append(f"   信心指數：{confidence}（{count}/30人）")
-        lines.append("")
-    except Exception:
-        pass
+        lines = [f"🏆 {target} 明日賽事主推統計\n本月榜前30名・共{collected}人預測\n"]
+        for _, row in top.iterrows():
+            count = int(row["count"])
+            if count >= 7:
+                confidence = "💪 強"
+            elif count >= 4:
+                confidence = "👍 中"
+            else:
+                confidence = "⚠️ 弱"
+            lines.append(f"📊 {row['game2']}")
+            lines.append(f"   → {row['pred2']}　{count}人推")
+            lines.append(f"   信心指數：{confidence}（{count}/30人）")
+            lines.append("")
 
-lines.append("─────────────────")
-lines.append("💬 加入運彩討論群")
-lines.append("LINE 搜尋 st130330")
+        lines.append("─────────────────")
+        lines.append("💬 加入運彩討論群")
+        lines.append("LINE 搜尋 st130330")
 
         push_message(user_id, "\n".join(lines))
 
     except Exception as e:
         push_message(user_id, f"❌ 發生錯誤：{str(e)}")
+
 
 def push_message(user_id, text):
     try:
@@ -249,9 +252,11 @@ def push_message(user_id, text):
     except Exception as e:
         print(f"Push error: {e}")
 
+
 @app.route("/")
 def index():
     return "OK", 200
+
 
 @app.route("/callback", methods=["POST"])
 def callback():
@@ -262,6 +267,7 @@ def callback():
     except InvalidSignatureError:
         abort(400)
     return "OK", 200
+
 
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_message(event):
@@ -299,6 +305,7 @@ def handle_message(event):
                 messages=[TextMessage(text=reply)]
             )
         )
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
