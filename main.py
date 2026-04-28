@@ -57,7 +57,7 @@ NBA　MLB　足球
 
 📊 系統說明：
 本系統透過爬蟲技術
-自動抓取本月主推榜前50名高手
+自動抓取本月主推榜前100名高手
 統計今日及明日尚未開打比賽
 的免費預測方向與信號強度
 
@@ -66,7 +66,7 @@ NBA　MLB　足球
 付費預測內容無法爬取
 數據僅供參考，非投注建議
 
-⏳ 爬取需要 5~15 分鐘
+⏳ 爬取需要 10~20 分鐘
    完成後自動回傳結果
 
 ━━━━━━━━━━━━━━━━━━━━
@@ -75,10 +75,19 @@ LINE 搜尋 st130330
 ━━━━━━━━━━━━━━━━━━━━"""
 
 
-def bar(count, total=50):
+def bar(count, total=100):
     filled = round(count / total * 10)
     filled = max(1, min(10, filled))
     return "▓" * filled + "░" * (10 - filled)
+
+
+def confidence_label(count):
+    if count >= 15:
+        return "💪 強"
+    elif count >= 8:
+        return "👍 中"
+    else:
+        return "⚠️ 弱"
 
 
 def medal(rank):
@@ -207,7 +216,7 @@ def run_crawler(target, user_id):
             return
 
         leaderboard = pd.DataFrame()
-        for page in range(3):
+        for page in range(5):
             try:
                 r = Leaderboard(alliance, page)
                 temp = r.dataframe
@@ -220,7 +229,7 @@ def run_crawler(target, user_id):
             push_message(user_id, "❌ 無法取得排行榜，請稍後再試")
             return
 
-        leaderboard = leaderboard.head(50)
+        leaderboard = leaderboard.head(100)
 
         today_pred, today_count = fetch_predictions(leaderboard, "today")
         tomorrow_pred, tomorrow_count = fetch_predictions(leaderboard, "tomorrow")
@@ -229,7 +238,7 @@ def run_crawler(target, user_id):
         free_count = max(today_count, tomorrow_count)
 
         if all_pred.empty:
-            push_message(user_id, "❌ 沒有收集到免費預測資料\n可能高手們的預測都是付費內容")
+            push_message(user_id, "❌ 沒有收集到免費預測資料")
             return
 
         merge = pd.merge(
@@ -248,33 +257,34 @@ def run_crawler(target, user_id):
         mp["game2"] = mp["game"].apply(extract_game)
         mp["pred2"] = mp["prediction"].apply(clean_pred)
 
-        top = (mp.groupby(["game2", "pred2"]).size()
-               .reset_index(name="count")
-               .sort_values("count", ascending=False)
-               .head(10))
+        # 統計每場比賽每個方向的人數
+        pred_counts = (mp.groupby(["game2", "pred2"]).size()
+                       .reset_index(name="count")
+                       .sort_values("count", ascending=False))
+
+        # 按比賽分組，取總人數最多的比賽排序
+        game_total = pred_counts.groupby("game2")["count"].sum().sort_values(ascending=False)
+        top_games = game_total.head(8).index.tolist()
 
         now = datetime.now().strftime("%m/%d %H:%M")
 
         lines = [
-            f"━━━━━━━━━━━━━━━━━━━━",
+            "━━━━━━━━━━━━━━━━━━━━",
             f"⚡ {target} 主推情報｜{now}",
-            f"本月Top50・{free_count}人免費預測",
-            f"━━━━━━━━━━━━━━━━━━━━",
+            f"本月Top100・{free_count}人免費預測",
+            "━━━━━━━━━━━━━━━━━━━━",
             ""
         ]
 
-        for i, (_, row) in enumerate(top.iterrows()):
-            count = int(row["count"])
-            if count >= 10:
-                confidence = "💪 強"
-            elif count >= 5:
-                confidence = "👍 中"
-            else:
-                confidence = "⚠️ 弱"
-            lines.append(f"{medal(i)} {row['game2']}")
-            lines.append(f"   ➤ {row['pred2']}")
-            lines.append(f"   {bar(count)} {count}人推")
-            lines.append(f"   信號強度：{confidence}")
+        for rank, game in enumerate(top_games):
+            game_preds = pred_counts[pred_counts["game2"] == game].sort_values("count", ascending=False)
+            total = game_preds["count"].sum()
+            lines.append(f"{medal(rank)} {game}")
+            for _, row in game_preds.iterrows():
+                count = int(row["count"])
+                conf = confidence_label(count)
+                lines.append(f"   ➤ {row['pred2']}　{count}人推　{conf}")
+            lines.append(f"   {bar(total)} 共{total}人預測")
             lines.append("")
 
         lines.append("━━━━━━━━━━━━━━━━━━━━")
@@ -343,7 +353,7 @@ def handle_message(event):
                 daemon=True
             )
             t.start()
-            reply = f"⚡ 勝負密碼 啟動中\n\n🔍 目標：{text}\n📊 抓取本月Top50高手免費預測\n⏳ 約需 5~15 分鐘\n   完成後自動回傳..."
+            reply = f"⚡ 勝負密碼 啟動中\n\n🔍 目標：{text}\n📊 抓取本月Top100高手免費預測\n⏳ 約需 10~20 分鐘\n   完成後自動回傳..."
 
         else:
             reply = "❓ 指令不正確\n請輸入「說明」查看使用方式"
