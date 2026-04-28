@@ -57,11 +57,16 @@ NBA　MLB　足球
 
 📊 系統說明：
 本系統透過爬蟲技術
-自動抓取本月主推榜前30名高手
+自動抓取本月主推榜前50名高手
 統計今日及明日尚未開打比賽
-的預測方向與信號強度
+的免費預測方向與信號強度
 
-⚠️ 爬取需要 5~10 分鐘
+⚠️ 注意：
+本系統僅統計高手的免費預測
+付費預測內容無法爬取
+數據僅供參考，非投注建議
+
+⏳ 爬取需要 5~15 分鐘
    完成後自動回傳結果
 
 ━━━━━━━━━━━━━━━━━━━━
@@ -70,8 +75,9 @@ LINE 搜尋 st130330
 ━━━━━━━━━━━━━━━━━━━━"""
 
 
-def bar(count, total=30):
+def bar(count, total=50):
     filled = round(count / total * 10)
+    filled = max(1, min(10, filled))
     return "▓" * filled + "░" * (10 - filled)
 
 
@@ -201,7 +207,7 @@ def run_crawler(target, user_id):
             return
 
         leaderboard = pd.DataFrame()
-        for page in range(2):
+        for page in range(3):
             try:
                 r = Leaderboard(alliance, page)
                 temp = r.dataframe
@@ -214,16 +220,16 @@ def run_crawler(target, user_id):
             push_message(user_id, "❌ 無法取得排行榜，請稍後再試")
             return
 
-        leaderboard = leaderboard.head(30)
+        leaderboard = leaderboard.head(50)
 
         today_pred, today_count = fetch_predictions(leaderboard, "today")
         tomorrow_pred, tomorrow_count = fetch_predictions(leaderboard, "tomorrow")
 
         all_pred = pd.concat([today_pred, tomorrow_pred], ignore_index=True)
-        collected = max(today_count, tomorrow_count)
+        free_count = max(today_count, tomorrow_count)
 
         if all_pred.empty:
-            push_message(user_id, "❌ 沒有收集到預測資料")
+            push_message(user_id, "❌ 沒有收集到免費預測資料\n可能高手們的預測都是付費內容")
             return
 
         merge = pd.merge(
@@ -236,7 +242,7 @@ def run_crawler(target, user_id):
         mp = mp.drop_duplicates(subset=["userid", "game", "prediction"])
 
         if mp.empty:
-            push_message(user_id, f"⚠️ {target} 目前沒有尚未開打的比賽預測\n請稍後再試")
+            push_message(user_id, f"⚠️ {target} 目前沒有尚未開打的比賽免費預測\n請稍後再試")
             return
 
         mp["game2"] = mp["game"].apply(extract_game)
@@ -252,16 +258,16 @@ def run_crawler(target, user_id):
         lines = [
             f"━━━━━━━━━━━━━━━━━━━━",
             f"⚡ {target} 主推情報｜{now}",
-            f"本月Top30・{collected}人有效預測",
+            f"本月Top50・{free_count}人免費預測",
             f"━━━━━━━━━━━━━━━━━━━━",
             ""
         ]
 
         for i, (_, row) in enumerate(top.iterrows()):
             count = int(row["count"])
-            if count >= 7:
+            if count >= 10:
                 confidence = "💪 強"
-            elif count >= 4:
+            elif count >= 5:
                 confidence = "👍 中"
             else:
                 confidence = "⚠️ 弱"
@@ -272,7 +278,7 @@ def run_crawler(target, user_id):
             lines.append("")
 
         lines.append("━━━━━━━━━━━━━━━━━━━━")
-        lines.append("📊 數據統計，非投注建議")
+        lines.append("📊 僅統計免費預測・非投注建議")
         lines.append("💬 LINE搜尋 st130330")
         lines.append("━━━━━━━━━━━━━━━━━━━━")
 
@@ -337,7 +343,7 @@ def handle_message(event):
                 daemon=True
             )
             t.start()
-            reply = f"⚡ 勝負密碼 啟動中\n\n🔍 目標：{text}\n📊 抓取本月Top30高手預測\n⏳ 約需 5~10 分鐘\n   完成後自動回傳..."
+            reply = f"⚡ 勝負密碼 啟動中\n\n🔍 目標：{text}\n📊 抓取本月Top50高手免費預測\n⏳ 約需 5~15 分鐘\n   完成後自動回傳..."
 
         else:
             reply = "❓ 指令不正確\n請輸入「說明」查看使用方式"
