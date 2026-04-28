@@ -7,6 +7,7 @@ import requests
 import pandas as pd
 import threading
 from io import StringIO
+from datetime import datetime
 from functools import cached_property
 from fake_useragent import UserAgent
 from bs4 import BeautifulSoup
@@ -43,28 +44,39 @@ Korea_team = ["首爾三星迅雷","蔚山現代太陽神","釜山KCC宙斯盾",
 NHL_team = ["紐澤西魔鬼","紐約島人","紐約遊騎兵","費城飛人","匹茲堡企鵝","卡羅萊納颶風","華盛頓首都","波士頓棕熊","水牛城軍刀","多倫多楓葉","佛羅里達美洲豹","坦帕灣閃電","溫尼伯噴射機","芝加哥黑鷹","納許維爾掠奪者","聖路易藍調","科羅拉多雪崩","達拉斯星辰","卡加利火焰","愛德蒙頓油人","溫哥華加人","安納罕鴨","洛杉磯國王","聖荷西鯊魚","維加斯黃金騎士","西雅圖海怪"]
 team_pattern = "|".join(NBA_team + NHL_team + MLB_team + NPB_team + Korea_team)
 
-HELP_MSG = """🏆 勝負密碼 使用說明
+HELP_MSG = """━━━━━━━━━━━━━━━━━━━━
+🏆 勝負密碼 使用說明
+━━━━━━━━━━━━━━━━━━━━
 
 📌 直接輸入目標即可：
-NBA
-MLB
-足球
-日本職棒
+NBA　MLB　足球
+日本職棒　NHL冰球
+美式足球　歐洲職籃
+韓國職籃　中國職籃
+日本職籃　澳洲職籃
 
-📌 支援目標：
-NBA / MLB / 足球 / 日本職棒
-NHL冰球 / 美式足球 / 歐洲職籃
-韓國職籃 / 中國職籃 / 日本職籃
+📊 系統說明：
+本系統透過爬蟲技術
+自動抓取本月主推榜前30名高手
+統計今日及明日尚未開打比賽
+的預測方向與信號強度
 
-📌 說明：
-本系統自動抓取本月主推榜前30名高手
-對明日比賽的預測方向進行統計
+⚠️ 爬取需要 5~10 分鐘
+   完成後自動回傳結果
 
-⚠️ 爬取需要 3~10 分鐘，請耐心等候
-
-─────────────────
+━━━━━━━━━━━━━━━━━━━━
 💬 加入運彩討論群
-LINE 搜尋 st130330"""
+LINE 搜尋 st130330
+━━━━━━━━━━━━━━━━━━━━"""
+
+
+def bar(count, total=30):
+    filled = round(count / total * 10)
+    return "▓" * filled + "░" * (10 - filled)
+
+
+def medal(rank):
+    return ["🥇", "🥈", "🥉"][rank] if rank < 3 else f"#{rank+1}"
 
 
 class Leaderboard:
@@ -97,7 +109,7 @@ class Leaderboard:
         global_ = pd.DataFrame(self.board_json["rankers"].get("2", []))
         df = pd.concat([global_, taiwan], ignore_index=True)
         df.replace({"mode": {1: "運彩盤賽事", 2: "國際盤賽事", "1": "運彩盤賽事", "2": "國際盤賽事"}}, inplace=True)
-        df["linkUrl"] = self.user_url + df["userid"] + f"&allianceid={self.alliance}&gameday=tomorrow"
+        df["linkUrl"] = self.user_url + df["userid"] + f"&allianceid={self.alliance}&gameday=today"
         return df
 
 
@@ -161,6 +173,26 @@ def clean_pred(s):
     return re.sub(r"\d+|[贏輸%.]", "", str(s)).strip()
 
 
+def fetch_predictions(leaderboard, gameday):
+    all_pred = pd.DataFrame()
+    collected = 0
+    lb = leaderboard.copy()
+    lb["linkUrl"] = lb["linkUrl"].str.replace(
+        r"gameday=\w+", f"gameday={gameday}", regex=True
+    )
+    for i in range(len(lb)):
+        try:
+            user = RankUser(lb.iloc[i])
+            pred = user.prediction
+            if pred.shape[0] > 0:
+                all_pred = pd.concat([all_pred, pred], ignore_index=True)
+                collected += 1
+        except Exception:
+            pass
+        time.sleep(random.uniform(0.8, 2))
+    return all_pred, collected
+
+
 def run_crawler(target, user_id):
     try:
         alliance = alliance_dict.get(target)
@@ -184,18 +216,11 @@ def run_crawler(target, user_id):
 
         leaderboard = leaderboard.head(30)
 
-        all_pred = pd.DataFrame()
-        collected = 0
-        for i in range(len(leaderboard)):
-            try:
-                user = RankUser(leaderboard.iloc[i])
-                pred = user.prediction
-                if pred.shape[0] > 0:
-                    all_pred = pd.concat([all_pred, pred], ignore_index=True)
-                    collected += 1
-            except Exception:
-                pass
-            time.sleep(random.uniform(1, 3))
+        today_pred, today_count = fetch_predictions(leaderboard, "today")
+        tomorrow_pred, tomorrow_count = fetch_predictions(leaderboard, "tomorrow")
+
+        all_pred = pd.concat([today_pred, tomorrow_pred], ignore_index=True)
+        collected = max(today_count, tomorrow_count)
 
         if all_pred.empty:
             push_message(user_id, "❌ 沒有收集到預測資料")
@@ -208,9 +233,10 @@ def run_crawler(target, user_id):
         merge = merge[merge["mode_x"] == merge["mode_y"]]
         mp = merge[merge["main_push"]].copy()
         mp = mp[~mp["game"].apply(has_score)].copy()
+        mp = mp.drop_duplicates(subset=["userid", "game", "prediction"])
 
         if mp.empty:
-            push_message(user_id, f"⚠️ {target} 目前沒有明日比賽的預測\n高手們可能還沒下注，請晚點再試")
+            push_message(user_id, f"⚠️ {target} 目前沒有尚未開打的比賽預測\n請稍後再試")
             return
 
         mp["game2"] = mp["game"].apply(extract_game)
@@ -221,8 +247,17 @@ def run_crawler(target, user_id):
                .sort_values("count", ascending=False)
                .head(10))
 
-        lines = [f"🏆 {target} 明日賽事主推統計\n本月榜前30名・共{collected}人預測\n"]
-        for _, row in top.iterrows():
+        now = datetime.now().strftime("%m/%d %H:%M")
+
+        lines = [
+            f"━━━━━━━━━━━━━━━━━━━━",
+            f"⚡ {target} 主推情報｜{now}",
+            f"本月Top30・{collected}人有效預測",
+            f"━━━━━━━━━━━━━━━━━━━━",
+            ""
+        ]
+
+        for i, (_, row) in enumerate(top.iterrows()):
             count = int(row["count"])
             if count >= 7:
                 confidence = "💪 強"
@@ -230,14 +265,16 @@ def run_crawler(target, user_id):
                 confidence = "👍 中"
             else:
                 confidence = "⚠️ 弱"
-            lines.append(f"📊 {row['game2']}")
-            lines.append(f"   → {row['pred2']}　{count}人推")
-            lines.append(f"   信心指數：{confidence}（{count}/30人）")
+            lines.append(f"{medal(i)} {row['game2']}")
+            lines.append(f"   ➤ {row['pred2']}")
+            lines.append(f"   {bar(count)} {count}人推")
+            lines.append(f"   信號強度：{confidence}")
             lines.append("")
 
-        lines.append("─────────────────")
-        lines.append("💬 加入運彩討論群")
-        lines.append("LINE 搜尋 st130330")
+        lines.append("━━━━━━━━━━━━━━━━━━━━")
+        lines.append("📊 數據統計，非投注建議")
+        lines.append("💬 LINE搜尋 st130330")
+        lines.append("━━━━━━━━━━━━━━━━━━━━")
 
         push_message(user_id, "\n".join(lines))
 
@@ -300,10 +337,10 @@ def handle_message(event):
                 daemon=True
             )
             t.start()
-            reply = f"⏳ 開始統計 {text} 明日賽事主推\n本月榜前30名高手預測中\n約需 5~10 分鐘，完成後自動回傳..."
+            reply = f"⚡ 勝負密碼 啟動中\n\n🔍 目標：{text}\n📊 抓取本月Top30高手預測\n⏳ 約需 5~10 分鐘\n   完成後自動回傳..."
 
         else:
-            reply = "❓ 格式錯誤\n請輸入「說明」查看使用方式"
+            reply = "❓ 指令不正確\n請輸入「說明」查看使用方式"
 
         line_bot_api.reply_message(
             ReplyMessageRequest(
